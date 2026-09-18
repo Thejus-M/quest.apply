@@ -117,6 +117,19 @@ Panel {
       state = state
       persist()
     }
+
+    // "I opened the posting and confirmed this is worth a resume." Idempotent
+    // — opening a posting twice doesn't toggle it back off.
+    function markChecked(url) {
+      var d = state.days && state.days[Jobs.todayKey()]
+      if (!d) return
+      d.checked = d.checked || []
+      if (d.checked.indexOf(url) === -1) {
+        d.checked.push(url)
+        state = state
+        persist()
+      }
+    }
   }
 
   FileView {
@@ -201,8 +214,16 @@ Panel {
     }
   }
 
+  function isChecked(url) {
+    return !!(root.today && (root.today.checked || []).indexOf(url) >= 0)
+  }
+
   function generateResume(job) {
     if (!config.careerOpsDir || !config.pluginDir || root.resumeBusyUrl) return
+    if (!root.isChecked(job.url)) {
+      root.resumeStatus = "Open the posting first to confirm it's the right job."
+      return
+    }
     root.resumeBusyUrl = job.url
     root.resumeStatus = "Building " + job.company + " resume…"
     resumeProcess.command = [
@@ -323,12 +344,16 @@ Panel {
               width: parent.width
               job: modelData
               applied: (root.today && root.today.applied || []).indexOf(modelData.url) >= 0
+              checked: root.isChecked(modelData.url)
               hasResume: !!(root.today && root.today.resumes && root.today.resumes[modelData.url])
               busy: root.resumeBusyUrl === modelData.url
               foreground: root.foreground
               onToggleApplied: store.toggleApplied(modelData.url)
               onGenerateResume: root.generateResume(modelData)
-              onOpenPosting: if (root.bar) root.bar.run("xdg-open " + root.bar.shellQuote(modelData.url))
+              onOpenPosting: {
+                store.markChecked(modelData.url)
+                if (root.bar) root.bar.run("xdg-open " + root.bar.shellQuote(modelData.url))
+              }
             }
           }
 
@@ -435,6 +460,7 @@ Panel {
     id: jobRow
     property var job: null
     property bool applied: false
+    property bool checked: false
     property bool hasResume: false
     property bool busy: false
     property color foreground: Color.foreground
@@ -488,8 +514,8 @@ Panel {
 
           Text {
             textFormat: Text.PlainText
-            text: "open posting ↗"
-            color: Color.accent
+            text: jobRow.checked ? "✓ checked · open posting ↗" : "open posting ↗ (confirms it's the right job)"
+            color: jobRow.checked ? Qt.darker(jobRow.foreground, 1.5) : Color.accent
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
           }
@@ -506,9 +532,11 @@ Panel {
 
       PanelActionButton {
         iconText: jobRow.busy ? "…" : "📄"
-        tooltipText: jobRow.hasResume ? "Resume ready — regenerate" : "Generate resume"
+        tooltipText: !jobRow.checked
+          ? "Open the posting first to confirm it's the right job"
+          : (jobRow.hasResume ? "Resume ready — regenerate" : "Generate resume")
         foreground: jobRow.hasResume ? root.goodColor : jobRow.foreground
-        enabled: !jobRow.busy
+        enabled: !jobRow.busy && jobRow.checked
         onClicked: jobRow.generateResume()
       }
 
