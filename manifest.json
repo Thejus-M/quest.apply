@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "quest.apply",
+  "name": "Apply Quest",
+  "version": "0.1.0",
+  "author": "iam033720+claude@gmail.com",
+  "license": "MIT",
+  "description": "Daily job-application streak tracker. Picks 5 companies from career-ops's scan pool, tracks how many you apply to each day (goal: 3+), and generates a resume PDF per job via career-ops's tex/tectonic pipeline.",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "Panel.qml" },
+  "barWidget": {
+    "displayName": "Apply Quest",
+    "description": "Streak + daily job-application quest with one-click resume generation.",
+    "category": "Productivity",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {},
+    "schema": []
+  }
+}
