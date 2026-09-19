@@ -15,7 +15,8 @@
 //   { streak, longestStreak, usedUrls: [...], days: { "YYYY-MM-DD": {
 //       picks: [{url,company,role}], checked: [url,...], applied: [url,...],
 //       resumes: {url: pdfPath},
-//       liveness: {url: {status: "active"|"expired"|"uncertain", reason, checkedAt}}
+//       liveness: {url: {status: "active"|"expired"|"uncertain", reason, checkedAt}},
+//       why: {url: {archetype, why, proofPoints: [...]}}
 //   } } }
 //
 // `checked` = "I opened the posting and confirmed this is worth a resume".
@@ -107,12 +108,84 @@ function rollDay(state, pool) {
   return state
 }
 
+// Round-robins across companies rather than taking the pool in file order —
+// pipeline.md groups postings by company (scan.mjs writes one company at a
+// time), so a plain slice(0, need) tends to hand back 5 openings at the same
+// company instead of 5 different ones.
 function pickMore(pool, usedUrls, alreadyPicked, need) {
   var used = {}
   for (var i = 0; i < usedUrls.length; i++) used[usedUrls[i]] = true
   var fresh = pool.filter(function (p) { return !used[p.url] && !alreadyPicked[p.url] })
   var source = fresh.length > 0 ? fresh : pool.filter(function (p) { return !alreadyPicked[p.url] })
-  return source.slice(0, need)
+
+  var byCompany = {}
+  var companyOrder = []
+  for (var j = 0; j < source.length; j++) {
+    var c = source[j].company
+    if (!byCompany[c]) { byCompany[c] = []; companyOrder.push(c) }
+    byCompany[c].push(source[j])
+  }
+
+  var result = []
+  var round = 0
+  while (result.length < need) {
+    var addedThisRound = false
+    for (var k = 0; k < companyOrder.length && result.length < need; k++) {
+      var bucket = byCompany[companyOrder[k]]
+      if (round < bucket.length) {
+        result.push(bucket[round])
+        addedThisRound = true
+      }
+    }
+    if (!addedThisRound) break
+    round++
+  }
+  return result
+}
+
+// Drops today's picks whose last liveness check came back "expired" and
+// backfills the freed slots from `pool`. Mutates and returns state. No-op if
+// there's no today entry yet, or nothing expired.
+function replaceExpired(state, pool) {
+  var today = todayKey()
+  var entry = state.days && state.days[today]
+  if (!entry) return state
+
+  var liveness = entry.liveness || {}
+  var keep = entry.picks.filter(function (p) {
+    return !(liveness[p.url] && liveness[p.url].status === "expired")
+  })
+  var droppedCount = entry.picks.length - keep.length
+  if (droppedCount === 0) return state
+
+  var already = {}
+  for (var i = 0; i < keep.length; i++) already[keep[i].url] = true
+  var fresh = pickMore(pool || [], state.usedUrls || [], already, droppedCount)
+  state.usedUrls = state.usedUrls || []
+  for (var j = 0; j < fresh.length; j++) state.usedUrls.push(fresh[j].url)
+
+  entry.picks = keep.concat(fresh)
+  return state
+}
+
+// Full reroll: drops ALL of today's picks (not just expired ones) and
+// re-picks 5 fresh, never-before-used companies from `pool`. Per-URL history
+// (applied/resumes/checked/liveness/why, all keyed by URL) is left as-is —
+// it simply stops being referenced by any current pick, so it's inert, not
+// wrong. Unlike ensureToday()/replaceExpired(), this always acts, even if
+// nothing is expired — it's the explicit "show me 5 different companies"
+// action, not an automatic top-up.
+function rerollToday(state, pool) {
+  var today = todayKey()
+  var entry = state.days && state.days[today]
+  if (!entry) return state
+
+  entry.picks = []
+  var fresh = pickMore(pool || [], state.usedUrls || [], {}, PICKS_PER_DAY)
+  state.usedUrls = state.usedUrls || []
+  for (var i = 0; i < fresh.length; i++) state.usedUrls.push(fresh[i].url)
+  entry.picks = fresh
+  return state
 }
 
 function computeXp(state) {

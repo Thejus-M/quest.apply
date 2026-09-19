@@ -35,6 +35,15 @@ Panel {
   readonly property int xp: Jobs.computeXp(store.state)
   readonly property int level: Jobs.computeLevel(root.xp)
   readonly property var badges: Jobs.computeBadges(store.state)
+  readonly property int expiredTodayCount: {
+    var liveness = (root.today && root.today.liveness) || {}
+    var n = 0
+    for (var i = 0; i < root.todayPicks.length; i++) {
+      var l = liveness[root.todayPicks[i].url]
+      if (l && l.status === "expired") n++
+    }
+    return n
+  }
 
   readonly property color statusColor: root.goalMet ? root.goodColor : (root.appliedCount > 0 ? root.midColor : root.badColor)
 
@@ -136,6 +145,36 @@ Panel {
       if (!d) return
       d.liveness = d.liveness || {}
       d.liveness[url] = { status: status, reason: reason, checkedAt: new Date().toISOString() }
+      state = state
+      persist()
+    }
+
+    function recordWhy(url, archetype, why, proofPoints) {
+      var d = state.days && state.days[Jobs.todayKey()]
+      if (!d) return
+      d.why = d.why || {}
+      d.why[url] = { archetype: archetype, why: why, proofPoints: proofPoints }
+      state = state
+      persist()
+    }
+
+    // Drops picks last checked "expired" and backfills from the current
+    // pool. No-op until 🔎 has actually flagged something expired.
+    function replaceExpired() {
+      var before = JSON.stringify((state.days && state.days[Jobs.todayKey()] && state.days[Jobs.todayKey()].picks) || [])
+      Jobs.replaceExpired(state, pool)
+      var after = JSON.stringify((state.days && state.days[Jobs.todayKey()] && state.days[Jobs.todayKey()].picks) || [])
+      if (before !== after) {
+        state = state
+        persist()
+      }
+    }
+
+    // Full reroll: replaces all 5 of today's picks with fresh companies,
+    // regardless of liveness. The explicit "give me different companies"
+    // action.
+    function rerollToday() {
+      Jobs.rerollToday(state, pool)
       state = state
       persist()
     }
@@ -281,6 +320,54 @@ Panel {
     checkProcess.running = true
   }
 
+  // ---- "why this fits" (expand panel): sourced from the candidate's own
+  // config/profile.yml archetypes + proof points, no LLM call ----
+  property var whyBusyUrl: null
+  property string expandedUrl: ""
+
+  Process {
+    id: whyProcess
+    running: false
+    workingDirectory: config.careerOpsDir
+    command: []
+    stdout: StdioCollector { id: whyStdout; waitForEnd: true }
+    stderr: StdioCollector { id: whyStderr; waitForEnd: true }
+    onExited: function (exitCode) {
+      var url = root.whyBusyUrl
+      root.whyBusyUrl = null
+      try {
+        var result = JSON.parse(String(whyStdout.text || "{}"))
+        if (result.ok) {
+          store.recordWhy(url, result.archetype, result.why, result.proofPoints || [])
+        }
+      } catch (e) { /* leave unset; row shows nothing rather than garbage */ }
+    }
+  }
+
+  function explainJob(job) {
+    if (!config.careerOpsDir || !config.pluginDir || root.whyBusyUrl) return
+    root.whyBusyUrl = job.url
+    whyProcess.command = [
+      "node", config.pluginDir + "/bin/why-fit.mjs",
+      "--career-ops", config.careerOpsDir,
+      "--company", job.company,
+      "--role", job.role
+    ]
+    whyProcess.running = true
+  }
+
+  function toggleExpanded(job) {
+    if (root.expandedUrl === job.url) {
+      root.expandedUrl = ""
+      return
+    }
+    root.expandedUrl = job.url
+    // Lazily fetch on first expand; cached results (store.today.why) mean
+    // repeat expands don't re-run the process.
+    var cached = root.today && root.today.why && root.today.why[job.url]
+    if (!cached) root.explainJob(job)
+  }
+
   // ---- bar label ----
   Item {
     id: barButton
@@ -365,6 +452,21 @@ Panel {
           onClicked: root.runScan()
         }
 
+        ActionRow {
+          width: parent.width
+          visible: root.expiredTodayCount > 0
+          label: "♻️ Replace " + root.expiredTodayCount + " expired pick" + (root.expiredTodayCount === 1 ? "" : "s")
+          rowEnabled: true
+          onClicked: store.replaceExpired()
+        }
+
+        ActionRow {
+          width: parent.width
+          label: "🎲 Reroll today's 5"
+          rowEnabled: config.careerOpsDir !== ""
+          onClicked: store.rerollToday()
+        }
+
         Text {
           visible: root.scanStatus !== ""
           width: parent.width
@@ -395,10 +497,14 @@ Panel {
               busy: root.resumeBusyUrl === modelData.url
               checkBusy: root.checkBusyUrl === modelData.url
               liveness: (root.today && root.today.liveness && root.today.liveness[modelData.url]) || null
+              expanded: root.expandedUrl === modelData.url
+              why: (root.today && root.today.why && root.today.why[modelData.url]) || null
+              whyBusy: root.whyBusyUrl === modelData.url
               foreground: root.foreground
               onToggleApplied: store.toggleApplied(modelData.url)
               onGenerateResume: root.generateResume(modelData)
               onCheckJob: root.checkJob(modelData)
+              onToggleExpanded: root.toggleExpanded(modelData)
               onOpenPosting: {
                 store.markChecked(modelData.url)
                 if (root.bar) root.bar.run("xdg-open " + Util.shellQuote(modelData.url))
@@ -514,6 +620,9 @@ Panel {
     property bool busy: false
     property bool checkBusy: false
     property var liveness: null
+    property bool expanded: false
+    property var why: null
+    property bool whyBusy: false
     property color foreground: Color.foreground
     readonly property color livenessColor: !jobRow.liveness ? Qt.darker(jobRow.foreground, 2.0)
       : jobRow.liveness.status === "active" ? root.goodColor
@@ -522,6 +631,7 @@ Panel {
     signal toggleApplied()
     signal generateResume()
     signal checkJob()
+    signal toggleExpanded()
     signal openPosting()
 
     implicitHeight: content.implicitHeight + Style.space(14)
@@ -590,15 +700,81 @@ Panel {
           font.pixelSize: Style.font.caption
           font.bold: !!jobRow.liveness && jobRow.liveness.status !== "uncertain"
         }
+
+        // "Why this fits" expand panel — sourced from the candidate's own
+        // config/profile.yml archetypes + proof points (see why-fit.mjs).
+        Column {
+          visible: jobRow.expanded
+          width: parent.width
+          spacing: Style.spacing.xs
+          topPadding: Style.space(4)
+
+          PanelSeparator { width: parent.width; foreground: jobRow.foreground }
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width
+            wrapMode: Text.WordWrap
+            visible: jobRow.whyBusy
+            text: "Matching against your profile…"
+            color: Qt.darker(jobRow.foreground, 1.5)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width
+            wrapMode: Text.WordWrap
+            visible: !jobRow.whyBusy && !!jobRow.why
+            text: jobRow.why ? ("Archetype: " + jobRow.why.archetype + "\n" + jobRow.why.why) : ""
+            color: jobRow.foreground
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+          }
+
+          Repeater {
+            model: (jobRow.why && jobRow.why.proofPoints) || []
+            delegate: Text {
+              required property var modelData
+              textFormat: Text.PlainText
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "• " + modelData
+              color: Qt.darker(jobRow.foreground, 1.3)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width
+            wrapMode: Text.WordWrap
+            visible: !jobRow.whyBusy && !jobRow.why
+            text: "No match found — click ▾ again to retry."
+            color: Qt.darker(jobRow.foreground, 1.5)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+          }
+        }
       }
     }
 
     Row {
       id: actions
       anchors.right: parent.right
+      anchors.top: parent.top
       anchors.rightMargin: Style.spacing.rowPaddingX
-      anchors.verticalCenter: parent.verticalCenter
+      anchors.topMargin: Style.space(10)
       spacing: Style.space(6)
+
+      PanelActionButton {
+        iconText: jobRow.expanded ? "▾" : "▸"
+        tooltipText: jobRow.expanded ? "Hide why this fits" : "Why this fits — expand"
+        foreground: jobRow.foreground
+        onClicked: jobRow.toggleExpanded()
+      }
 
       PanelActionButton {
         iconText: jobRow.checkBusy ? "…" : "🔎"
