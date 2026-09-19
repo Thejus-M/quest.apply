@@ -130,6 +130,15 @@ Panel {
         persist()
       }
     }
+
+    function recordLiveness(url, status, reason) {
+      var d = state.days && state.days[Jobs.todayKey()]
+      if (!d) return
+      d.liveness = d.liveness || {}
+      d.liveness[url] = { status: status, reason: reason, checkedAt: new Date().toISOString() }
+      state = state
+      persist()
+    }
   }
 
   FileView {
@@ -233,6 +242,43 @@ Panel {
       "--role", job.role
     ]
     resumeProcess.running = true
+  }
+
+  // ---- liveness: "🔎 check exists" via career-ops's own check-liveness.mjs ----
+  property var checkBusyUrl: null
+
+  Process {
+    id: checkProcess
+    running: false
+    workingDirectory: config.careerOpsDir
+    command: []
+    stdout: StdioCollector { id: checkStdout; waitForEnd: true }
+    stderr: StdioCollector { id: checkStderr; waitForEnd: true }
+    onExited: function (exitCode) {
+      var url = root.checkBusyUrl
+      root.checkBusyUrl = null
+      try {
+        var result = JSON.parse(String(checkStdout.text || "{}"))
+        if (result.ok) {
+          store.recordLiveness(url, result.status, result.reason)
+        } else {
+          store.recordLiveness(url, "uncertain", result.error || "check failed")
+        }
+      } catch (e) {
+        store.recordLiveness(url, "uncertain", "check failed")
+      }
+    }
+  }
+
+  function checkJob(job) {
+    if (!config.careerOpsDir || !config.pluginDir || root.checkBusyUrl) return
+    root.checkBusyUrl = job.url
+    checkProcess.command = [
+      "node", config.pluginDir + "/bin/check-job.mjs",
+      "--career-ops", config.careerOpsDir,
+      "--url", job.url
+    ]
+    checkProcess.running = true
   }
 
   // ---- bar label ----
@@ -347,9 +393,12 @@ Panel {
               checked: root.isChecked(modelData.url)
               hasResume: !!(root.today && root.today.resumes && root.today.resumes[modelData.url])
               busy: root.resumeBusyUrl === modelData.url
+              checkBusy: root.checkBusyUrl === modelData.url
+              liveness: (root.today && root.today.liveness && root.today.liveness[modelData.url]) || null
               foreground: root.foreground
               onToggleApplied: store.toggleApplied(modelData.url)
               onGenerateResume: root.generateResume(modelData)
+              onCheckJob: root.checkJob(modelData)
               onOpenPosting: {
                 store.markChecked(modelData.url)
                 if (root.bar) root.bar.run("xdg-open " + Util.shellQuote(modelData.url))
@@ -463,9 +512,16 @@ Panel {
     property bool checked: false
     property bool hasResume: false
     property bool busy: false
+    property bool checkBusy: false
+    property var liveness: null
     property color foreground: Color.foreground
+    readonly property color livenessColor: !jobRow.liveness ? Qt.darker(jobRow.foreground, 2.0)
+      : jobRow.liveness.status === "active" ? root.goodColor
+      : jobRow.liveness.status === "expired" ? root.badColor
+      : root.midColor
     signal toggleApplied()
     signal generateResume()
+    signal checkJob()
     signal openPosting()
 
     implicitHeight: content.implicitHeight + Style.space(14)
@@ -520,6 +576,20 @@ Panel {
             font.pixelSize: Style.font.caption
           }
         }
+
+        Text {
+          visible: !!jobRow.liveness || jobRow.checkBusy
+          textFormat: Text.PlainText
+          width: parent.width
+          wrapMode: Text.WordWrap
+          text: jobRow.checkBusy
+            ? "Checking…"
+            : (jobRow.liveness ? ("🔎 " + jobRow.liveness.status + (jobRow.liveness.reason ? " — " + jobRow.liveness.reason : "")) : "")
+          color: jobRow.livenessColor
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          font.bold: !!jobRow.liveness && jobRow.liveness.status !== "uncertain"
+        }
       }
     }
 
@@ -529,6 +599,14 @@ Panel {
       anchors.rightMargin: Style.spacing.rowPaddingX
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.space(6)
+
+      PanelActionButton {
+        iconText: jobRow.checkBusy ? "…" : "🔎"
+        tooltipText: "Check if this posting is still live"
+        foreground: jobRow.livenessColor
+        enabled: !jobRow.checkBusy
+        onClicked: jobRow.checkJob()
+      }
 
       PanelActionButton {
         iconText: jobRow.busy ? "…" : "📄"

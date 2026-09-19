@@ -14,12 +14,16 @@
 // Data this widget owns (~/.local/state/omarchy/apply-quest-state.json):
 //   { streak, longestStreak, usedUrls: [...], days: { "YYYY-MM-DD": {
 //       picks: [{url,company,role}], checked: [url,...], applied: [url,...],
-//       resumes: {url: pdfPath}
+//       resumes: {url: pdfPath},
+//       liveness: {url: {status: "active"|"expired"|"uncertain", reason, checkedAt}}
 //   } } }
 //
 // `checked` = "I opened the posting and confirmed this is worth a resume".
 // The widget only enables 📄 once a pick is checked — resumes are generated
 // for confirmed-relevant jobs, not blindly for everything the scanner found.
+// `liveness` = last "🔎 check exists" result — informational (shown on the
+// row), not a hard gate: liveness checks can come back "uncertain" for jobs
+// that are actually still open, so it doesn't block 📄.
 
 var DAILY_GOAL = 3
 var PICKS_PER_DAY = 5
@@ -86,7 +90,7 @@ function rollDay(state, pool) {
       state.streak = 0
     }
     state.longestStreak = Math.max(state.longestStreak, state.streak)
-    entry = { picks: [], checked: [], applied: [], resumes: {} }
+    entry = { picks: [], checked: [], applied: [], resumes: {}, liveness: {} }
     state.days[today] = entry
   }
 
