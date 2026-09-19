@@ -204,7 +204,7 @@ Panel {
         if (result.ok) {
           store.recordResume(url, result.pdf)
           root.resumeStatus = "Resume ready"
-          if (root.bar) root.bar.run("xdg-open " + root.bar.shellQuote(result.pdf))
+          if (root.bar) root.bar.run("xdg-open " + Util.shellQuote(result.pdf))
         } else {
           root.resumeStatus = "Resume failed: " + (result.error || "unknown error")
         }
@@ -352,7 +352,7 @@ Panel {
               onGenerateResume: root.generateResume(modelData)
               onOpenPosting: {
                 store.markChecked(modelData.url)
-                if (root.bar) root.bar.run("xdg-open " + root.bar.shellQuote(modelData.url))
+                if (root.bar) root.bar.run("xdg-open " + Util.shellQuote(modelData.url))
               }
             }
           }
