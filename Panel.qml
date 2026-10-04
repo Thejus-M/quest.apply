@@ -790,7 +790,7 @@ Panel {
           ? "Open the posting first to confirm it's the right job"
           : (jobRow.hasResume ? "Resume ready — regenerate" : "Generate resume")
         foreground: jobRow.hasResume ? root.goodColor : jobRow.foreground
-        enabled: !jobRow.busy && jobRow.checked
+        enabled: !jobRow.busy
         onClicked: jobRow.generateResume()
       }
 
