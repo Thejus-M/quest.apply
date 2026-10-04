@@ -268,9 +268,14 @@ Panel {
 
   function generateResume(job) {
     if (!config.careerOpsDir || !config.pluginDir || root.resumeBusyUrl) return
+    // Previously this just set a status text and stopped -- but that text
+    // renders below the whole 5-row list, off-screen unless scrolled, so a
+    // click on an unconfirmed posting looked like a dead button. Open the
+    // posting (same as the "open posting" link) and mark it checked as part
+    // of the same click instead of requiring a separate, invisible step.
     if (!root.isChecked(job.url)) {
-      root.resumeStatus = "Open the posting first to confirm it's the right job."
-      return
+      store.markChecked(job.url)
+      if (root.bar) root.bar.run("xdg-open " + Util.shellQuote(job.url))
     }
     root.resumeBusyUrl = job.url
     root.resumeStatus = "Building " + job.company + " resume…"
