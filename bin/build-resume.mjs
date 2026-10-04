@@ -110,6 +110,7 @@ function parseCvMd(text) {
     email: "",
     github: "",
     linkedin: "",
+    website: "",
     summary: "",
     experience: [],
     projects: [],
@@ -123,6 +124,7 @@ function parseCvMd(text) {
   cv.email = field(text, "Email");
   cv.github = field(text, "GitHub");
   cv.linkedin = field(text, "LinkedIn");
+  cv.website = field(text, "Website");
   cv.summary = section(text, "Summary");
 
   const expBlock = section(text, "Experience");
@@ -268,7 +270,8 @@ function buildTex(cv, job) {
 \\small
 \\href{mailto:${cv.email}}{\\raisebox{-0.2\\height}\\faEnvelope\\ \\underline{${escapeLatex(cv.email)}}} ~
 \\href{${withScheme(cv.linkedin)}}{\\raisebox{-0.2\\height}\\faLinkedin\\ \\underline{${escapeLatex(cv.linkedin)}}} ~
-\\href{${withScheme(cv.github)}}{\\raisebox{-0.2\\height}\\faGithub\\ \\underline{${escapeLatex(cv.github)}}}
+\\href{${withScheme(cv.github)}}{\\raisebox{-0.2\\height}\\faGithub\\ \\underline{${escapeLatex(cv.github)}}}${cv.website ? ` ~
+\\href{${withScheme(cv.website)}}{\\raisebox{-0.2\\height}\\faGlobe\\ \\underline{${escapeLatex(cv.website)}}}` : ""}
 \\end{center}
 \\section{Education}
 \\resumeSubHeadingListStart
