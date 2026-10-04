@@ -53,7 +53,11 @@ function yesterdayKey() {
 function parsePipelinePool(text) {
   var lines = String(text || "").split("\n")
   var pool = []
-  var re = /^-\s*\[\s\]\s*(\S+)\s*\|\s*([^|]+?)\s*\|\s*(.+?)\s*$/
+  // Role stops at the next `|` (or end of line) same as company -- pipeline.md
+  // rows can carry trailing `| location | posted: ... | trust: ... | note: ...`
+  // columns (see modes/pipeline.md's "Format of pipeline.md"), and a greedy
+  // role capture swallowed all of it into the displayed/resume-header role.
+  var re = /^-\s*\[\s\]\s*(\S+)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*(?:\|.*)?$/
   for (var i = 0; i < lines.length; i++) {
     var m = re.exec(lines[i])
     if (!m) continue
